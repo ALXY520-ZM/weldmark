@@ -41,6 +41,9 @@
   .modal .row button { flex:1; padding:10px 0; border:none; border-radius:10px; font-size:14px; cursor:pointer; }
   .modal .ok { background:#e94560; color:#fff; }
   .modal .cancel { background:#2a3a5e; color:#9db2d0; }
+  .modeRow { display:flex; gap:8px; margin-top:12px; }
+  .modeBtn { flex:1; padding:9px 0; border:1px solid #3a4a6e; border-radius:10px; background:#0f1a33; color:#9db2d0; font-size:13px; cursor:pointer; }
+  .modeBtn.sel { background:#e94560; border-color:#e94560; color:#fff; }
 </style>
 </head>
 <body>
@@ -82,6 +85,10 @@
   <div class="modal">
     <h3 id="mTitle">输入长度</h3>
     <input id="mInput" type="text" placeholder="如：120">
+    <div class="modeRow" id="mModeRow" style="display:none;">
+      <button class="modeBtn" data-m="满焊">满焊</button>
+      <button class="modeBtn" data-m="点焊">点焊</button>
+    </div>
     <div class="row">
       <button class="cancel" id="mCancel">取消</button>
       <button class="ok" id="mOk">确定</button>
@@ -131,11 +138,38 @@
 
   // ===== 自定义弹窗 =====
   const mask=document.getElementById('mask'), mTitle=document.getElementById('mTitle'), mInput=document.getElementById('mInput');
+  const mModeRow=document.getElementById('mModeRow');
   let modalCb=null;
+  let selMode=''; // 选中的焊接方式
+
+  // 方式按钮切换
+  document.querySelectorAll('.modeBtn').forEach(b=>{
+    b.onclick=()=>{
+      selMode=b.dataset.m;
+      document.querySelectorAll('.modeBtn').forEach(x=>x.classList.remove('sel'));
+      b.classList.add('sel');
+    };
+  });
+
+  // 通用弹窗（无方式选择）
   function openModal(title,placeholder,defaultVal,cb){
     mTitle.textContent=title;
     mInput.placeholder=placeholder||'';
     mInput.value=defaultVal||'';
+    mModeRow.style.display='none';
+    selMode='';
+    modalCb=cb;
+    mask.classList.add('show');
+    setTimeout(()=>mInput.focus(),100);
+  }
+  // 焊接标注弹窗（长度+满焊/点焊）
+  function openLineModal(cb){
+    mTitle.textContent='焊接标注';
+    mInput.placeholder='输入长度（mm），如120';
+    mInput.value='';
+    mModeRow.style.display='flex';
+    selMode='';
+    document.querySelectorAll('.modeBtn').forEach(x=>x.classList.remove('sel'));
     modalCb=cb;
     mask.classList.add('show');
     setTimeout(()=>mInput.focus(),100);
@@ -144,9 +178,12 @@
     mask.classList.remove('show');
     if(modalCb){ const cb=modalCb; modalCb=null; cb(val); }
   }
-  document.getElementById('mOk').onclick=()=>closeModal(mInput.value.trim());
-  document.getElementById('mCancel').onclick=()=>closeModal('');
-  mask.addEventListener('click',e=>{ if(e.target===mask) closeModal(''); });
+  document.getElementById('mOk').onclick=()=>{
+    if(mModeRow.style.display==='flex') closeModal({len:mInput.value.trim(), mode:selMode});
+    else closeModal(mInput.value.trim());
+  };
+  document.getElementById('mCancel').onclick=()=>closeModal(null);
+  mask.addEventListener('click',e=>{ if(e.target===mask) closeModal(null); });
 
   // 上传图片
   document.getElementById('btnPick').onclick=()=>file.click();
@@ -308,9 +345,13 @@
         drawing=null;
         if(dd<10){ draw(); return; }
         if(mode==='line'){
-          openModal('输入焊接长度','如：120（毫米）','',val=>{
-            if(val){ L.label=val+'mm'; }
-            lines.push(L); undoStack.push({t:'line'}); draw();
+          openLineModal(res=>{
+            if(res){
+              if(res.len) L.label=res.len+'mm';
+              if(res.mode) L.label=(L.label?L.label+' · ':'')+res.mode;
+              lines.push(L); undoStack.push({t:'line'});
+            }
+            draw();
           });
           draw();
         }
@@ -357,9 +398,13 @@
       const dd=Math.hypot(L.x2-L.x1,L.y2-L.y1);
       drawing=null;
       if(dd<10){ draw(); return; }
-      openModal('输入焊接长度','如：120（毫米）','',val=>{
-        if(val){ L.label=val+'mm'; }
-        lines.push(L); undoStack.push({t:'line'}); draw();
+      openLineModal(res=>{
+        if(res){
+          if(res.len) L.label=res.len+'mm';
+          if(res.mode) L.label=(L.label?L.label+' · ':'')+res.mode;
+          lines.push(L); undoStack.push({t:'line'});
+        }
+        draw();
       });
       draw();
     }
