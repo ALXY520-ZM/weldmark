@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>焊缝标注工具 v2</title>
+<title>焊缝标注工具 v3</title>
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
   body { font-family:"Microsoft YaHei",system-ui,sans-serif; background:#1a1a2e; color:#fff; height:100vh; display:flex; flex-direction:column; overflow:hidden; }
@@ -29,13 +29,25 @@
   .wd { width:24px; height:24px; border-radius:6px; background:#0f3460; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:10px; color:#aaa; }
   .wd.sel { background:#e94560; color:#fff; }
   input[type=file] { display:none; }
+
+  /* 自定义弹窗 */
+  .mask { position:fixed; inset:0; background:rgba(0,0,0,.55); display:none; align-items:center; justify-content:center; z-index:99; backdrop-filter:blur(3px); }
+  .mask.show { display:flex; }
+  .modal { background:#1e2a45; border-radius:18px; padding:20px 22px; width:78%; max-width:320px; box-shadow:0 12px 40px rgba(0,0,0,.5); border:1px solid #33415e; }
+  .modal h3 { font-size:16px; margin-bottom:14px; color:#fff; }
+  .modal input { width:100%; padding:11px 14px; border-radius:10px; border:1px solid #3a4a6e; background:#0f1a33; color:#fff; font-size:15px; outline:none; }
+  .modal input:focus { border-color:#e94560; }
+  .modal .row { display:flex; gap:10px; margin-top:16px; }
+  .modal .row button { flex:1; padding:10px 0; border:none; border-radius:10px; font-size:14px; cursor:pointer; }
+  .modal .ok { background:#e94560; color:#fff; }
+  .modal .cancel { background:#2a3a5e; color:#9db2d0; }
 </style>
 </head>
 <body>
 
 <div class="topbar">
-  <h1>🔧 焊缝标注工具 v2</h1>
-  <div class="tip">双指缩放 · 拖动看图 · 画线标注</div>
+  <h1>🔧 焊缝标注工具 v3</h1>
+  <div class="tip">双指缩放 · 标注恒定大小</div>
 </div>
 
 <div id="canvasWrap">
@@ -65,6 +77,18 @@
 
 <input type="file" id="file" accept="image/*">
 
+<!-- 自定义弹窗 -->
+<div class="mask" id="mask">
+  <div class="modal">
+    <h3 id="mTitle">输入长度</h3>
+    <input id="mInput" type="text" placeholder="如：120">
+    <div class="row">
+      <button class="cancel" id="mCancel">取消</button>
+      <button class="ok" id="mOk">确定</button>
+    </div>
+  </div>
+</div>
+
 <script>
 (function(){
   const cv = document.getElementById('cv');
@@ -73,10 +97,10 @@
   const file = document.getElementById('file');
   const emptyTip = document.getElementById('emptyTip');
 
-  let img = null;          // 原始图片
-  let imgW=0, imgH=0;      // 画布尺寸（=图片缩放后的基础尺寸）
-  let view = { scale:1, tx:0, ty:0 };  // 视图：缩放+平移
-  let fitScale = 1;        // 自适应屏幕的基础缩放（图片fit）
+  let img = null;
+  let imgW=0, imgH=0;
+  let view = { scale:1, tx:0, ty:0 };
+  let fitScale = 1;
   let lines = [];
   let texts = [];
   let undoStack = [];
@@ -105,6 +129,25 @@
   btnLine.onclick=()=>setMode('line');
   btnText.onclick=()=>setMode('text');
 
+  // ===== 自定义弹窗 =====
+  const mask=document.getElementById('mask'), mTitle=document.getElementById('mTitle'), mInput=document.getElementById('mInput');
+  let modalCb=null;
+  function openModal(title,placeholder,defaultVal,cb){
+    mTitle.textContent=title;
+    mInput.placeholder=placeholder||'';
+    mInput.value=defaultVal||'';
+    modalCb=cb;
+    mask.classList.add('show');
+    setTimeout(()=>mInput.focus(),100);
+  }
+  function closeModal(val){
+    mask.classList.remove('show');
+    if(modalCb){ const cb=modalCb; modalCb=null; cb(val); }
+  }
+  document.getElementById('mOk').onclick=()=>closeModal(mInput.value.trim());
+  document.getElementById('mCancel').onclick=()=>closeModal('');
+  mask.addEventListener('click',e=>{ if(e.target===mask) closeModal(''); });
+
   // 上传图片
   document.getElementById('btnPick').onclick=()=>file.click();
   file.onchange=e=>{
@@ -118,15 +161,14 @@
         imgW=w; imgH=h; img=im;
         hasImage=true; emptyTip.style.display='none';
         lines=[]; texts=[]; undoStack=[];
-        fitView();
-        draw();
+        fitView(); draw();
       };
       im.src=ev.target.result;
     };
     rd.readAsDataURL(f);
   };
 
-  // 自适应视图：让图片完整可见
+  // 自适应视图
   function fitView(){
     const r=wrap.getBoundingClientRect();
     if(!r.width||!r.height) return;
@@ -135,10 +177,8 @@
     view.tx=(r.width-imgW*fitScale)/2;
     view.ty=(r.height-imgH*fitScale)/2;
   }
-  // 重置视图
   function resetView(){ fitView(); draw(); }
   document.getElementById('zreset').onclick=resetView;
-  // 缩放按钮（以画布中心为锚）
   function zoomBy(f){
     const r=wrap.getBoundingClientRect();
     const cx=r.width/2, cy=r.height/2;
@@ -151,14 +191,14 @@
   document.getElementById('zin').onclick=()=>zoomBy(1.4);
   document.getElementById('zout').onclick=()=>zoomBy(1/1.4);
 
-  // 屏幕坐标 → 画布坐标
+  // 屏幕坐标 → 画布坐标（canvas 1:1，无偏移）
   function getPos(clientX,clientY){
     const r=cv.getBoundingClientRect();
     const sx=clientX-r.left, sy=clientY-r.top;
     return { x:(sx-view.tx)/view.scale, y:(sy-view.ty)/view.scale };
   }
 
-  // 绘制（应用视图变换）
+  // 绘制
   function draw(){
     ctx.save();
     ctx.setTransform(1,0,0,1,0,0);
@@ -170,11 +210,14 @@
     if(drawing) paintLine(drawing);
     ctx.restore();
   }
+  // 标注恒定屏幕大小：所有尺寸除以 view.scale
   function paintLine(L){
     ctx.save();
-    ctx.strokeStyle=L.color; ctx.lineWidth=L.w; ctx.lineCap='round';
+    const s=view.scale;
+    const w=L.w/s;  // 屏幕恒定线宽
+    ctx.strokeStyle=L.color; ctx.lineWidth=w; ctx.lineCap='round';
     ctx.beginPath(); ctx.moveTo(L.x1,L.y1); ctx.lineTo(L.x2,L.y2); ctx.stroke();
-    const ang=Math.atan2(L.y2-L.y1,L.x2-L.x1), al=L.w*3.2;
+    const ang=Math.atan2(L.y2-L.y1,L.x2-L.x1), al=w*3.2;
     ctx.beginPath();
     ctx.moveTo(L.x2,L.y2);
     ctx.lineTo(L.x2-al*Math.cos(ang-0.45), L.y2-al*Math.sin(ang-0.45));
@@ -182,10 +225,11 @@
     ctx.lineTo(L.x2-al*Math.cos(ang+0.45), L.y2-al*Math.sin(ang+0.45));
     ctx.stroke();
     if(L.label){
-      ctx.font='bold '+Math.max(16,Math.round(imgW/38))+'px sans-serif';
+      const fs=Math.max(14,Math.round(cv.width/45))/s; // 屏幕恒定字号
+      ctx.font='bold '+fs+'px sans-serif';
       ctx.textAlign='center'; ctx.textBaseline='bottom';
-      const mx=(L.x1+L.x2)/2, my=(L.y1+L.y2)/2-8;
-      ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.75)';
+      const mx=(L.x1+L.x2)/2, my=(L.y1+L.y2)/2-6/s;
+      ctx.lineWidth=Math.max(2,3/s); ctx.strokeStyle='rgba(0,0,0,.75)';
       ctx.strokeText(L.label,mx,my); ctx.fillStyle=L.color;
       ctx.fillText(L.label,mx,my);
     }
@@ -193,19 +237,20 @@
   }
   function paintText(T){
     ctx.save();
-    ctx.font='bold '+T.size+'px sans-serif';
+    const s=view.scale;
+    const fs=Math.max(16,Math.round(cv.width/38))/s;
+    ctx.font='bold '+fs+'px sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.75)';
+    ctx.lineWidth=Math.max(2,3/s); ctx.strokeStyle='rgba(0,0,0,.75)';
     ctx.strokeText(T.str,T.x,T.y); ctx.fillStyle=T.color;
     ctx.fillText(T.str,T.x,T.y);
     ctx.restore();
   }
 
-  // ===== 手势处理 =====
-  let pointers=new Map();   // 活动触点
-  let pinchDist=0;          // 双指距离
-  let pinchStart=null;      // 缩放起点 {scale,tx,ty}
-
+  // ===== 手势 =====
+  let pointers=new Map();
+  let pinchDist=0;
+  let pinchStart=null;
   function dist(a,b){ return Math.hypot(a.x-b.x,a.y-b.y); }
 
   function onStart(e){
@@ -222,8 +267,7 @@
       drawing=null;
       return;
     }
-    if(pointers.size===1){
-      if(mode==='text') return; // 文字模式单击处理
+    if(pointers.size===1 && mode==='line'){
       const p=getPos(e.touches[0].clientX,e.touches[0].clientY);
       drawing={x1:p.x,y1:p.y,x2:p.x,y2:p.y,color,w:lineW,label:null};
     }
@@ -238,9 +282,7 @@
       const p=[...pointers.values()];
       const d=dist(p[0],p[1]);
       const r=wrap.getBoundingClientRect();
-      const cx=r.width/2, cy=r.height/2;
       const ns=Math.max(fitScale*0.4, Math.min(pinchStart.scale*(d/pinchDist), fitScale*8));
-      // 以双指中点缩放+平移
       const mx=(p[0].x+p[1].x)/2-r.left, my=(p[0].y+p[1].y)/2-r.top;
       view.scale=ns;
       view.tx=mx-((mx-pinchStart.tx)/pinchStart.scale)*ns;
@@ -259,37 +301,34 @@
       pointers.delete(e.changedTouches[i].identifier);
     }
     if(pointers.size<2){ pinchStart=null; pinchDist=0; }
-    // 单指结束时完成画线
     if(pointers.size===0){
       if(drawing){
         const L=drawing;
         const dd=Math.hypot(L.x2-L.x1,L.y2-L.y1);
-        if(dd<10){ drawing=null; draw(); return; }
+        drawing=null;
+        if(dd<10){ draw(); return; }
         if(mode==='line'){
-          const label=prompt('输入焊接长度（mm），留空则不标：','');
-          if(label&&label.trim()) L.label=label.trim()+'mm';
-          lines.push(L); undoStack.push({t:'line'});
+          openModal('输入焊接长度','如：120（毫米）','',val=>{
+            if(val){ L.label=val+'mm'; }
+            lines.push(L); undoStack.push({t:'line'}); draw();
+          });
+          draw();
         }
-        drawing=null; draw();
+      } else if(mode==='text'){
+        // 文字模式：记录点击位置
+        const t=e.changedTouches[0];
+        const p=getPos(t.clientX,t.clientY);
+        openModal('输入文字','如：满焊 / 点焊','',val=>{
+          if(val){
+            const T={x:p.x,y:p.y,str:val,color,size:Math.round(cv.width/38)};
+            texts.push(T); undoStack.push({t:'text'}); draw();
+          }
+        });
       }
-      // 文字模式单击
-      if(mode==='text' && e.type==='touchend'){
-        // 用最后一次触点判断是点击（无移动）
-      }
-    }
-  }
-  function onTextTap(e){
-    if(mode!=='text'||!hasImage) return;
-    const c=e.touches?e.touches[0]:e;
-    const p=getPos(c.clientX,c.clientY);
-    const str=prompt('输入文字（如长度/说明）：','');
-    if(str&&str.trim()){
-      const T={x:p.x,y:p.y,str:str.trim(),color,size:Math.max(18,Math.round(imgW/32))};
-      texts.push(T); undoStack.push({t:'text'}); draw();
     }
   }
 
-  // 鼠标支持（电脑调试）
+  // 鼠标（电脑调试）
   let mouseDown=false, mouseMoved=false, mDownPos=null;
   cv.addEventListener('mousedown',e=>{
     if(!hasImage) return;
@@ -308,38 +347,45 @@
   window.addEventListener('mouseup',e=>{
     if(!mouseDown) return;
     mouseDown=false;
-    if(mode==='text' && !mouseMoved){ onTextTap(e); }
-    else if(drawing){
+    if(mode==='text' && !mouseMoved){
+      const p=getPos(e.clientX,e.clientY);
+      openModal('输入文字','如：满焊 / 点焊','',val=>{
+        if(val){ const T={x:p.x,y:p.y,str:val,color,size:Math.round(cv.width/38)}; texts.push(T); undoStack.push({t:'text'}); draw(); }
+      });
+    } else if(drawing){
       const L=drawing;
       const dd=Math.hypot(L.x2-L.x1,L.y2-L.y1);
-      if(dd<10){ drawing=null; draw(); return; }
-      const label=prompt('输入焊接长度（mm），留空则不标：','');
-      if(label&&label.trim()) L.label=label.trim()+'mm';
-      lines.push(L); undoStack.push({t:'line'});
-      drawing=null; draw();
+      drawing=null;
+      if(dd<10){ draw(); return; }
+      openModal('输入焊接长度','如：120（毫米）','',val=>{
+        if(val){ L.label=val+'mm'; }
+        lines.push(L); undoStack.push({t:'line'}); draw();
+      });
+      draw();
     }
   });
 
-  // 触屏
   cv.addEventListener('touchstart',onStart,{passive:false});
   cv.addEventListener('touchmove',onMove,{passive:false});
   cv.addEventListener('touchend',onEnd,{passive:false});
   cv.addEventListener('touchcancel',onEnd,{passive:false});
 
-  // 撤销
+  // 撤销/清空/保存
   document.getElementById('btnUndo').onclick=()=>{
     const op=undoStack.pop(); if(!op) return;
     if(op.t==='line') lines.pop(); else texts.pop();
     draw();
   };
-  // 清空
   document.getElementById('btnClear').onclick=()=>{
     if(!hasImage) return;
-    if(confirm('确定清空所有标注？')){ lines=[]; texts=[]; undoStack=[]; draw(); }
+    openModal('确认清空','输入"清空"确认','',val=>{
+      if(val==='清空'){ lines=[]; texts=[]; undoStack=[]; draw(); }
+    });
   };
-  // 保存
   document.getElementById('btnSave').onclick=()=>{
     if(!hasImage){ alert('请先选择照片'); return; }
+    // 保存前先复位视图（导出完整图）
+    fitView(); draw();
     const d=new Date(), ts=d.getFullYear()+''+String(d.getMonth()+1).padStart(2,'0')+''+String(d.getDate()).padStart(2,'0')+'_'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');
     const dataUrl=cv.toDataURL('image/png');
     const fname='焊缝标注_'+ts+'.png';
@@ -350,10 +396,11 @@
     }
   };
 
-  // 初始化画布尺寸
+  // canvas 1:1（修复偏移关键）
   function resizeCanvas(){
     const r=wrap.getBoundingClientRect();
-    cv.width=r.width*2; cv.height=r.height*2; // 2x高清
+    cv.width=Math.max(1,Math.round(r.width));
+    cv.height=Math.max(1,Math.round(r.height));
     if(hasImage){ fitView(); draw(); }
   }
   window.addEventListener('resize',resizeCanvas);
