@@ -1,0 +1,37 @@
+{
+  "app_name": "制作一个焊缝标注工具安卓App中文界面美观舒适App",
+  "package_name": "com.operit.appapp",
+  "project_dir": "/sdcard/Download/Operit/android_projects/制作一个焊缝标注工具安卓App中文界面美观舒适App",
+  "requirement": "制作一个焊缝标注工具安卓App（中文界面，美观舒适）：1.支持从相册选择图片或直接拍照；2.在图片上用手指画红线标注焊接位置（起点到终点拖拽）；3.每条线终点自动带箭头表示焊接方向；4.画完弹窗输入焊接长度(mm)，在线条中间显示长度文字；5.支持添加文字说明标注；6.支持撤销、清空；7.保存带标注的图片到手机相册（PNG）；8.支持线条颜色选择（红/橙/黄/绿/蓝/白）和线宽选择（细/中/粗）；9.界面深色主题、按钮清晰、适配手机触屏操作；10.单机离线可用，无需联网。应用名：焊缝标注工具，包名：com.rendong.weldmark",
+  "created_at": "2026-08-08T16:46:56.947Z",
+  "architecture": "MVVM",
+  "min_sdk": 24,
+  "target_sdk": 34,
+  "language": "Kotlin",
+  "build_system": "Gradle",
+  "template": "internal",
+  "ui_framework": "Jetpack Compose",
+  "dependencies": [
+    "androidx.core:core-ktx:1.12.0",
+    "androidx.lifecycle:lifecycle-runtime-ktx:2.7.0",
+    "androidx.activity:activity-compose:1.8.2",
+    "androidx.compose.ui:ui:1.6.0",
+    "androidx.compose.material3:material3:1.2.0"
+  ],
+  "ui_layout": {
+    "main_screen": "Scaffold with TopAppBar",
+    "navigation": "Single Activity",
+    "theme": "Material3 Dynamic Color"
+  },
+  "file_plan": [
+    "settings.gradle.kts",
+    "build.gradle.kts",
+    "app/build.gradle.kts",
+    "app/src/main/AndroidManifest.xml",
+    "app/src/main/java/com/operit/appapp/MainActivity.kt",
+    "app/src/main/java/com/operit/appapp/ui/theme/Theme.kt",
+    "app/src/main/java/com/operit/appapp/ui/theme/Color.kt",
+    "app/src/main/res/values/strings.xml"
+  ],
+  "status": "planned"
+}

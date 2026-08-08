@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>焊缝标注工具</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { font-family:"Microsoft YaHei",system-ui,sans-serif; background:#1a1a2e; color:#fff; height:100vh; display:flex; flex-direction:column; }
+  .topbar { padding:10px 14px; background:#16213e; display:flex; align-items:center; justify-content:space-between; }
+  .topbar h1 { font-size:17px; font-weight:600; }
+  .topbar .tip { font-size:11px; color:#8ab4f8; }
+  #canvasWrap { flex:1; overflow:auto; display:flex; justify-content:center; background:#0f0f1e; position:relative; }
+  canvas { display:block; max-width:100%; touch-action:none; }
+  .empty { position:absolute; top:45%; left:0; right:0; text-align:center; color:#666; font-size:15px; pointer-events:none; }
+  .toolbar { background:#16213e; padding:10px 8px calc(10px + env(safe-area-inset-bottom)); display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  .btn { flex:1; min-width:70px; padding:9px 6px; border:none; border-radius:8px; background:#0f3460; color:#fff; font-size:13px; cursor:pointer; text-align:center; }
+  .btn.active { background:#e94560; }
+  .btn.green { background:#16a34a; }
+  .btn.orange { background:#d97706; }
+  .btn.gray { background:#475569; }
+  .colors { display:flex; gap:6px; align-items:center; padding:0 4px; }
+  .dot { width:22px; height:22px; border-radius:50%; border:2px solid #fff3; cursor:pointer; }
+  .dot.sel { border-color:#fff; box-shadow:0 0 6px #fff8; }
+  .widths { display:flex; gap:6px; align-items:center; }
+  .wd { width:26px; height:26px; border-radius:6px; background:#0f3460; display:flex; align-items:center; justify-content:center; cursor:pointer; font-size:10px; color:#aaa; }
+  .wd.sel { background:#e94560; color:#fff; }
+  input[type=file] { display:none; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>🔧 焊缝标注工具</h1>
+  <div class="tip">画线=焊接位置 · 箭头=方向 · 文字=长度</div>
+</div>
+
+<div id="canvasWrap">
+  <canvas id="cv"></canvas>
+  <div class="empty" id="emptyTip">⬆ 先点下方"选择照片"</div>
+</div>
+
+<div class="toolbar">
+  <button class="btn green" id="btnPick">📷 选择照片</button>
+  <button class="btn" id="btnLine">✏️ 画线</button>
+  <button class="btn" id="btnText">🔤 文字</button>
+  <button class="btn gray" id="btnUndo">↩️ 撤销</button>
+  <button class="btn gray" id="btnClear">🗑 清空</button>
+  <button class="btn orange" id="btnSave">💾 保存</button>
+  <div class="colors" id="colorRow"></div>
+  <div class="widths">
+    <div class="wd" data-w="4">细</div>
+    <div class="wd sel" data-w="7">中</div>
+    <div class="wd" data-w="12">粗</div>
+  </div>
+</div>
+
+<input type="file" id="file" accept="image/*">
+
+<script>
+(function(){
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const file = document.getElementById('file');
+  const emptyTip = document.getElementById('emptyTip');
+
+  let img = null;            // 已加载图片
+  let lines = [];            // 已确认的线
+  let texts = [];            // 已确认的文字
+  let undoStack = [];        // 撤销栈
+  let mode = 'line';         // line | text
+  let color = '#ff2d2d';     // 默认红色
+  let lineW = 7;             // 线宽
+  let drawing = null;        // 正在画的线 {x1,y1,x2,y2}
+  let hasImage = false;
+
+  // 颜色预设
+  const colors = ['#ff2d2d','#ffa500','#ffe600','#00e5ff','#00ff88','#ffffff'];
+  const colorRow = document.getElementById('colorRow');
+  colors.forEach((c,i)=>{
+    const d = document.createElement('div');
+    d.className = 'dot' + (i===0?' sel':'');
+    d.style.background = c;
+    d.onclick = ()=>{ color=c; document.querySelectorAll('.dot').forEach(x=>x.classList.remove('sel')); d.classList.add('sel'); };
+    colorRow.appendChild(d);
+  });
+
+  // 线宽选择
+  document.querySelectorAll('.wd').forEach(w=>{
+    w.onclick = ()=>{ lineW = +w.dataset.w; document.querySelectorAll('.wd').forEach(x=>x.classList.remove('sel')); w.classList.add('sel'); };
+  });
+
+  // 模式切换
+  const btnLine=document.getElementById('btnLine'), btnText=document.getElementById('btnText');
+  function setMode(m){
+    mode=m; btnLine.classList.toggle('active',m==='line'); btnText.classList.toggle('active',m==='text');
+  }
+  setMode('line');
+  btnLine.onclick=()=>setMode('line');
+  btnText.onclick=()=>setMode('text');
+
+  // 上传图片
+  document.getElementById('btnPick').onclick=()=>file.click();
+  file.onchange=e=>{
+    const f=e.target.files[0]; if(!f) return;
+    const rd=new FileReader();
+    rd.onload=ev=>{
+      const im=new Image();
+      im.onload=()=>{
+        // 限制最大边2000px防止爆内存
+        let w=im.width,h=im.height; const mx=2000;
+        if(Math.max(w,h)>mx){ const k=mx/Math.max(w,h); w=Math.round(w*k); h=Math.round(h*k); }
+        cv.width=w; cv.height=h;
+        ctx.drawImage(im,0,0,w,h);
+        img=im; hasImage=true; emptyTip.style.display='none';
+        lines=[]; texts=[]; undoStack=[];
+        draw();
+      };
+      im.src=ev.target.result;
+    };
+    rd.readAsDataURL(f);
+  };
+
+  // 坐标换算（触屏/鼠标）
+  function getPos(e){
+    const r=cv.getBoundingClientRect();
+    const clientX=e.touches?e.touches[0].clientX:e.clientX;
+    const clientY=e.touches?e.touches[0].clientY:e.clientY;
+    return { x:(clientX-r.left)*(cv.width/r.width), y:(clientY-r.top)*(cv.height/r.height) };
+  }
+
+  // 绘制
+  function draw(){
+    ctx.clearRect(0,0,cv.width,cv.height);
+    if(img) ctx.drawImage(img,0,0,cv.width,cv.height);
+    lines.forEach(L=>paintLine(L));
+    texts.forEach(T=>paintText(T));
+    if(drawing) paintLine(drawing);
+  }
+  function paintLine(L){
+    ctx.save();
+    ctx.strokeStyle=L.color; ctx.lineWidth=L.w; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(L.x1,L.y1); ctx.lineTo(L.x2,L.y2); ctx.stroke();
+    // 箭头（终点方向）
+    const ang=Math.atan2(L.y2-L.y1,L.x2-L.x1), al=L.w*3.2;
+    ctx.beginPath();
+    ctx.moveTo(L.x2,L.y2);
+    ctx.lineTo(L.x2-al*Math.cos(ang-0.45), L.y2-al*Math.sin(ang-0.45));
+    ctx.moveTo(L.x2,L.y2);
+    ctx.lineTo(L.x2-al*Math.cos(ang+0.45), L.y2-al*Math.sin(ang+0.45));
+    ctx.stroke();
+    // 长度文字（线中点偏上）
+    if(L.label){
+      ctx.font='bold '+Math.max(16,Math.round(cv.width/38))+'px sans-serif';
+      ctx.textAlign='center'; ctx.textBaseline='bottom';
+      const mx=(L.x1+L.x2)/2, my=(L.y1+L.y2)/2-8;
+      ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.75)';
+      ctx.strokeText(L.label,mx,my); ctx.fillStyle=L.color;
+      ctx.fillText(L.label,mx,my);
+    }
+    ctx.restore();
+  }
+  function paintText(T){
+    ctx.save();
+    ctx.font='bold '+T.size+'px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.75)';
+    ctx.strokeText(T.str,T.x,T.y); ctx.fillStyle=T.color;
+    ctx.fillText(T.str,T.x,T.y);
+    ctx.restore();
+  }
+
+  // 事件
+  let isDown=false;
+  function down(e){ e.preventDefault(); if(!hasImage) return; isDown=true;
+    const p=getPos(e); drawing={x1:p.x,y1:p.y,x2:p.x,y2:p.y,color,w:lineW,label:null};
+  }
+  function move(e){ e.preventDefault(); if(!isDown||!drawing) return;
+    const p=getPos(e); drawing.x2=p.x; drawing.y2=p.y; draw();
+  }
+  function up(e){ e.preventDefault(); if(!isDown) return; isDown=false;
+    if(!drawing) return;
+    const L=drawing;
+    // 太短的线当作点（文字模式或误触）
+    const dist=Math.hypot(L.x2-L.x1,L.y2-L.y1);
+    if(dist<10){ drawing=null; return; }
+    if(mode==='line'){
+      const label=prompt('输入焊接长度（mm），留空则不标：','');
+      if(label&&label.trim()) L.label=label.trim()+'mm';
+      lines.push(L); undoStack.push({t:'line'});
+    }
+    drawing=null; draw();
+  }
+  function tapText(e){ if(mode!=='text'||!hasImage) return; e.preventDefault();
+    const p=getPos(e);
+    const str=prompt('输入文字（如长度/说明）：','');
+    if(str&&str.trim()){
+      const T={x:p.x,y:p.y,str:str.trim(),color,size:Math.max(18,Math.round(cv.width/32))};
+      texts.push(T); undoStack.push({t:'text'}); draw();
+    }
+  }
+
+  cv.addEventListener('touchstart',e=>{ if(mode==='text'){tapText(e);} else down(e); },{passive:false});
+  cv.addEventListener('touchmove',move,{passive:false});
+  cv.addEventListener('touchend',up,{passive:false});
+  cv.addEventListener('mousedown',e=>{ if(mode==='text'){tapText(e);} else down(e); });
+  cv.addEventListener('mousemove',move);
+  cv.addEventListener('mouseup',up);
+
+  // 撤销
+  document.getElementById('btnUndo').onclick=()=>{
+    const op=undoStack.pop(); if(!op) return;
+    if(op.t==='line') lines.pop(); else texts.pop();
+    draw();
+  };
+
+  // 清空
+  document.getElementById('btnClear').onclick=()=>{
+    if(!hasImage) return;
+    if(confirm('确定清空所有标注？')){ lines=[]; texts=[]; undoStack=[]; draw(); }
+  };
+
+  // 保存
+  document.getElementById('btnSave').onclick=()=>{
+    if(!hasImage){ alert('请先选择照片'); return; }
+    const a=document.createElement('a');
+    const d=new Date(), ts=d.getFullYear()+''+String(d.getMonth()+1).padStart(2,'0')+''+String(d.getDate()).padStart(2,'0')+'_'+String(d.getHours()).padStart(2,'0')+String(d.getMinutes()).padStart(2,'0');
+    const dataUrl=cv.toDataURL('image/png');
+    const fname='焊缝标注_'+ts+'.png';
+    if(window.AndroidBridge){
+      AndroidBridge.saveImage(dataUrl,fname);
+    } else {
+      const a=document.createElement('a'); a.download=fname; a.href=dataUrl; a.click();
+    }
+  };
+})();
+</script>
+</body>
+</html>
